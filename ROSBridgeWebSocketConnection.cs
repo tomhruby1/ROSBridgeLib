@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Threading;
 using System.Reflection;
 using System;
@@ -61,8 +61,12 @@ using UnityEngine;
 		private List<Type> _publishers; //our publishers
 		private Type _serviceResponse; // to deal with service responses
 		private string _serviceName = null;
+        private JSONNode _rawServiceValues = null;
 		private string _serviceValues = null;
 		private List<RenderTask> _taskQ = new List<RenderTask>();
+		// <Changed>
+		private List<Type> _jsonResponseListeners;
+		// </Changed>
 
 		private object _queueLock = new object ();
 
@@ -90,6 +94,23 @@ using UnityEngine;
 			if (t.GetMethod ("ServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
 			throw new Exception ("invalid service response handler");
 		}
+
+		// <Changed>
+		private static string GetJSONServiceName(Type t) {
+			return (string) t.GetMethod ("GetServiceName", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, null);
+		}
+
+		private static void JSONServiceResponse(Type t, JSONNode node) {
+			t.GetMethod ("JSONServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, new object[] {node});
+		}
+
+		private static void IsValidJSONServiceResponse(Type t) {
+			if (t.GetMethod ("JSONServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+			throw new Exception ("invalid JSON service response handler");
+			if (t.GetMethod ("GetServiceName", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+			throw new Exception ("missing GetServiceName method");
+		}
+		// </Changed>
 
 		private static void IsValidSubscriber(Type t) {
 			if(t.GetMethod ("CallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
@@ -119,6 +140,9 @@ using UnityEngine;
 		 	_myThread = null;
 		 	_subscribers = new List<Type> ();
 		 	_publishers = new List<Type> ();
+		 	// <Changed>
+		 	_jsonResponseListeners = new List<Type> ();
+			// </Changed>
 		 }
 
 		/**
@@ -128,6 +152,13 @@ using UnityEngine;
 		 	IsValidServiceResponse (serviceResponse);
 		 	_serviceResponse = serviceResponse;
 		 }
+
+		 // <Changed>
+		 public void AddJSONServiceResponse(Type jsonServiceResponse) {
+		 	IsValidJSONServiceResponse (jsonServiceResponse);
+		 	_jsonResponseListeners.Add (jsonServiceResponse);
+		 }
+		 // </Changed>
 
 		/**
 		 * Add a subscriber callback to this connection. There can be many subscribers.
@@ -182,9 +213,9 @@ using UnityEngine;
 		 		_ws.Send(ROSBridgeMsg.Advertise (GetMessageTopic(p), GetMessageType(p)));
 		 		Debug.Log ("Sending " + ROSBridgeMsg.Advertise (GetMessageTopic(p), GetMessageType(p)));
 		 	}
-		 	while(true) {
-		 		Thread.Sleep (1000);
-		 	}
+		 	//while(true) {
+		 	//	Thread.Sleep (1000);
+		 	//}
 		 }
 
 		 private void OnMessage(string s) {
@@ -192,15 +223,16 @@ using UnityEngine;
 		 	if((s!= null) && !s.Equals ("")) {
 		 		JSONNode node = JSONNode.Parse(s);
                 //Debug.Log ("Parsed it");
-                string op = node["op"];
+		 		string op = node["op"];
                 //Debug.Log ("Operation is " + op);
-                if ("publish".Equals (op)) {
-		 			string topic = node["topic"];
+		 		if ("publish".Equals (op)) {
+                    //Debug.Log("Socket: " + _ws.IsAlive + ", " + _ws.ReadyState);
+                    string topic = node["topic"];
                     //Debug.Log ("Got a message on " + topic);
 		 			foreach(Type p in _subscribers) {
 		 				if(topic.Equals (GetMessageTopic (p))) {
                             //Debug.Log ("And will parse it " + GetMessageTopic (p));
-                            ROSBridgeMsg msg = ParseMessage(p, node["msg"]);
+		 					ROSBridgeMsg msg = ParseMessage(p, node["msg"]);
 		 					RenderTask newTask = new RenderTask(p, topic, msg);
 		 					lock(_queueLock) {
 		 						bool found = false;
@@ -218,47 +250,90 @@ using UnityEngine;
 
 		 				}
 		 			}
-		 			} else if("service_response".Equals (op)) {
-		 				Debug.Log ("Got service response " + node.ToString ());
-		 				_serviceName = node["service"];
-		 				_serviceValues = (node["values"] == null) ? "" : node["values"].ToString ();
-		 				} else
-		 				Debug.Log ("Must write code here for other messages");
-		 				} else
-		 				Debug.Log ("Got an empty message from the web socket");
-		 			}
+	 			} else if("service_response".Equals (op)) {
+                    // <Changed>
+                    //Debug.Log ("Got service response " + node.ToString ());
+                    // </Changed>
+                    string service_name = node["service"];
+                    // <Changed>
+                    Debug.Log(service_name);
+	 				Type targetListener = null;
+	 				foreach (Type p in _jsonResponseListeners) {
+	 					if (GetJSONServiceName(p).Equals (service_name)) {
+	 						targetListener = p;
+	 						break;
+	 					}
+	 				}
+	 				if (targetListener != null) {
+                        //Debug.Log("Socket: " + _ws.IsAlive + ", " + _ws.ReadyState);
+                        //JSONServiceResponse(targetListener, node["values"]);
+                        _serviceName = service_name;
+                        _rawServiceValues = node["values"];
+                        _serviceResponse = targetListener;
 
-		 			public void Render() {
-		 				RenderTask newTask = null;
-		 				lock (_queueLock) {
-		 					if(_taskQ.Count > 0) {
-		 						newTask = _taskQ[0];
-		 						_taskQ.RemoveAt (0);
-		 					}
-		 				}
-		 				if(newTask != null)
-		 				Update(newTask.getSubscriber (), newTask.getMsg ());
+	 				} else {
+                        _serviceName = service_name;
+	 					_serviceValues = (node["values"] == null) ? "" : node["values"].ToString ();
+	 				}
+	 				// _serviceValues = (node["values"] == null) ? "" : node["values"].ToString ();
+					// </Changed>
+ 				} else
+ 					Debug.Log ("Must write code here for other messages");
+			} else
+				Debug.Log ("Got an empty message from the web socket");
+		}
 
-		 				if (_serviceName != null) {
-		 					ServiceResponse (_serviceResponse, _serviceName, _serviceValues);
-		 					_serviceName = null;
-		 				}
-		 			}
+		public void Render() {
+			RenderTask newTask = null;
+			lock (_queueLock) {
+				if(_taskQ.Count > 0) {
+					newTask = _taskQ[0];
+					_taskQ.RemoveAt (0);
+				}
+			}
+			if(newTask != null)
+			Update(newTask.getSubscriber (), newTask.getMsg ());
 
-		 			public void Publish(String topic, ROSBridgeMsg msg) {
-		 				if(_ws != null) {
-		 					string s = ROSBridgeMsg.Publish (topic, msg.ToYAMLString ());
+			if (_serviceName != null && _serviceResponse != null) {
+                if (_serviceValues != null)
+                {
+                    ServiceResponse(_serviceResponse, _serviceName, _serviceValues);
+                } else if (_rawServiceValues != null)
+                {
+                    JSONServiceResponse(_serviceResponse, _rawServiceValues);
+                }
+                _serviceValues = null;
+                _rawServiceValues = null;
+				
+				_serviceName = null;
+                _serviceResponse = null;
+			}
+		}
+
+		public void Publish(String topic, ROSBridgeMsg msg) {
+			if(_ws != null) {
+				string s = ROSBridgeMsg.Publish (topic, msg.ToYAMLString ());
 				//Debug.Log ("Sending " + s);
-		 					_ws.Send (s);
-		 				}
-		 			}
+				_ws.Send (s);
+			}
+		}
 
-		 			public void CallService(string service, string args) {
-		 				if (_ws != null) {
-		 					string s = ROSBridgeMsg.CallService (service, args);
-		 					Debug.Log ("Sending " + s);
-		 					_ws.Send (s);
-		 				}
-		 			}
-		 		}
-		 	}
+		public void CallService(string service, string args) {
+			if (_ws != null) {
+				string s = ROSBridgeMsg.CallService (service, args);
+				Debug.Log ("Sending " + s);
+				_ws.Send (s);
+			}
+		}
+
+		// // <Changed>
+		// public void CallJSONService(string service, string args) {
+		// 	if (_ws != null) {
+		// 		string s = ROSBridgeMsg.CallService (service, args);
+		// 		Debug.Log ("Sending JSON Service Call: " + s);
+		// 		_ws.Send (s);
+		// 	}
+		// }
+		// // </Changed>
+	}
+}
