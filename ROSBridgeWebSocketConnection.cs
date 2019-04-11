@@ -294,7 +294,8 @@ using UnityEngine;
 			if(newTask != null)
 			Update(newTask.getSubscriber (), newTask.getMsg ());
 
-			if (_serviceName != null && _serviceResponse != null) {
+            // <Changed>
+            if (_serviceName != null && _serviceResponse != null) {
                 if (_serviceValues != null)
                 {
                     ServiceResponse(_serviceResponse, _serviceName, _serviceValues);
@@ -308,9 +309,10 @@ using UnityEngine;
 				_serviceName = null;
                 _serviceResponse = null;
 			}
-		}
+            // </Changed>
+        }
 
-		public void Publish(String topic, ROSBridgeMsg msg) {
+        public void Publish(String topic, ROSBridgeMsg msg) {
 			if(_ws != null) {
 				string s = ROSBridgeMsg.Publish (topic, msg.ToYAMLString ());
 				//Debug.Log ("Sending " + s);
