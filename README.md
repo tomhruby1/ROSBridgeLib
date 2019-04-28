@@ -1,19 +1,17 @@
 # ROSBridgeLib
-A Unity library for communicattion with ROS through [RosBridge](http://wiki.ros.org/rosbridge_suite)
+A Unity library for communication with ROS through [RosBridge](http://wiki.ros.org/rosbridge_suite)
 
-The first version of this I believe origins from [Michael Jenkin](https://github.com/michaeljenkin), in the repo [unityros](https://github.com/michaeljenkin/unityros). He has made a sample unity project showing turtlesim, with good instructions on how to use this project. All honor goes to him. I created this project because there was no repository containing the barebone library.
-
-This repository is intended to be imported as a git [submodule](https://git-scm.com/book/en/v2/Git-Tools-Submodules).
+The first version of this I believe origins from [Michael Jenkin](https://github.com/michaeljenkin), in the repo [unityros](https://github.com/michaeljenkin/unityros). He made a sample unity project showing turtlesim, with good instructions on how to use this project. All honor goes to him. I created this project because there was no repository containing the barebone library.
 
 ## Included messages
-This repository does not contain every ROS message. If you need to add one, please fork this repository, add the file and make a pull request.
+This repository does not contain every ROS message. If you need to add one, please make a pull request.
 
 ## Documentation
-Documentation is in the code. I have added some more in addition to what Michael Jenkin (original
-author). The main file is ROSBridgeWebSocketConnection.cs, which sets up everything.
+Documentation is in the code. I added some more in addition to what Michael Jenkin (original
+author) did. The main file is ROSBridgeWebSocketConnection.cs, which sets up everything.
 
 ## Example usage
-This is an example application where a ball is controlled. Basically, there are three important script types to notice. Firstly, create a main script responsible for initializing RosBridge:
+This is an example application where a ball is controlled. Basically, there are three important script types to notice. First, create a main script responsible for initializing RosBridge:
 
 ``` cs
 public class RollABallRosController : MonoBehaviour {
@@ -47,7 +45,7 @@ public class RollABallRosController : MonoBehaviour {
 Then, create a subscriber script which will receive updates from a chosen ROS topic
 ``` cs
 // Ball subscriber:
-public class RealsenseImageSubscriber : ROSBridgeSubscriber {
+public class BallPoseSubscriber : ROSBridgeSubscriber {
   static GameObject ball;
 
   // These two are important
@@ -59,12 +57,12 @@ public class RealsenseImageSubscriber : ROSBridgeSubscriber {
     return "std_msgs/PoseMsg";
   }
 
-  // Important function (I think, converting json to PoseMsg)
+  // Important function (I think.. Converts json to PoseMsg)
   public new static ROSBridgeMsg ParseMessage(JSONNode msg) {
     return new PoseMsg (msg);
   }
 
-  // This function should fire on each ros message
+  // This function should fire on each received ros message
   public new static void CallBack(ROSBridgeMsg msg) {
 
     // Update ball position, or whatever
