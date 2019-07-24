@@ -14,7 +14,7 @@ namespace ROSBridgeLib {
 			private float _data;
 			
 			public Float32Msg(JSONNode msg) {
-				_data = float.Parse(msg["data"]);
+				_data = float.Parse(msg["data"].Value);
 			}
 			
 			public Float32Msg(float data) {
