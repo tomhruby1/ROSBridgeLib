@@ -367,7 +367,7 @@ using UnityEngine;
                     // </Changed>
                     string service_name = node["service"];
                     // <Changed>
-                    Debug.Log(service_name);
+                    //Debug.Log(service_name);
                     Type targetListener = null;
                     if (!(node["id"] is JSONLazyCreator))
                     {
@@ -455,7 +455,7 @@ using UnityEngine;
                         {
                             continue;
                         }
-                        handler(curr_response["values"]);
+                        handler(curr_response);
                     }
                     // </Changed>
 
