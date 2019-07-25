@@ -54,6 +54,7 @@ using UnityEngine;
  		private string _host;
  		private int _port;
  		private WebSocket _ws;
+        private bool _connected = false;
  		private System.Threading.Thread _myThread;
 
         // <Changed>
@@ -201,6 +202,11 @@ using UnityEngine;
                 topic_subs.Add(subscriber);
                 static_subscribers.Add(topicName, topic_subs);
             }
+            if (_connected)
+            {
+                _ws.Send(ROSBridgeMsg.Subscribe(topicName, GetMessageType(subscriber)));
+                Debug.Log("Sending " + ROSBridgeMsg.Subscribe(topicName, GetMessageType(subscriber)));
+            }
         }
 
         public void AddSubscriber(string topicName, ROSTopicSubscriber subscriber)
@@ -217,6 +223,11 @@ using UnityEngine;
                 topic_subs = new List<ROSTopicSubscriber>(2);
                 topic_subs.Add(subscriber);
                 subscribers.Add(topicName, topic_subs);
+            }
+            if (_connected)
+            {
+                _ws.Send(ROSBridgeMsg.Subscribe(topicName, subscriber.GetMessageType(topicName)));
+                Debug.Log("Sending " + ROSBridgeMsg.Subscribe(topicName, subscriber.GetMessageType(topicName)));
             }
         }
 
@@ -240,15 +251,27 @@ using UnityEngine;
                 topic_pubs.Add(publisher);
                 static_publishers.Add(topicName, topic_pubs);
             }
+
+            if (_connected)
+            {
+                _ws.Send(ROSBridgeMsg.Advertise(topicName, GetMessageType(publisher)));
+                Debug.Log("Sending " + ROSBridgeMsg.Advertise(topicName, GetMessageType(publisher)));
+            }
         }
 
-        public void AddPublisher(string topic, string message_type)
+        public void AddPublisher(string topicName, string message_type)
         {
-            if (publishTopic_to_messageType.ContainsKey(topic))
+            if (publishTopic_to_messageType.ContainsKey(topicName))
             {
                 return;
             }
-            publishTopic_to_messageType[topic] = message_type;
+            publishTopic_to_messageType[topicName] = message_type;
+
+            if (_connected)
+            {
+                _ws.Send(ROSBridgeMsg.Advertise(topicName, message_type));
+                Debug.Log("Sending " + ROSBridgeMsg.Advertise(topicName, message_type));
+            }
         }
         // </Changed>
 
@@ -264,6 +287,7 @@ using UnityEngine;
 		 * Disconnect from the remote ros environment.
 		 */
 		 public void Disconnect() {
+            _connected = false;
 		 	_myThread.Abort ();
 		 	foreach(string topicName in static_subscribers.Keys) {
 		 		_ws.Send(ROSBridgeMsg.UnSubscribe(topicName));
@@ -291,6 +315,7 @@ using UnityEngine;
 		 	_ws = new WebSocket(_host + ":" + _port);
 		 	_ws.OnMessage += (sender, e) => this.OnMessage(e.Data);
 		 	_ws.Connect();
+            _connected = true;
 
 		 	foreach(KeyValuePair<string, List<Type>> topic in static_subscribers) {
 		 		_ws.Send(ROSBridgeMsg.Subscribe (topic.Key, GetMessageType (topic.Value[0])));
