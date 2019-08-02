@@ -4,10 +4,27 @@ namespace ROSBridgeLib
 {
     namespace sensor_msgs
     {
+        /// <summary>
+        /// Navigation Satellite fix for any Global Navigation Satellite System
+        /// </summary>
+        /// <see cref="http://docs.ros.org/melodic/api/sensor_msgs/html/msg/NavSatFix.html"/>
+        /// <seealso cref="http://docs.ros.org/melodic/api/sensor_msgs/html/msg/NavSatStatus.html"/>
+        /// <remarks>Specified using the WGS 84 reference ellipsoid</remarks>
         public class NavSatFixMsg : ROSBridgeMsg
         {
-            ROSBridgeLib.std_msgs.HeaderMsg _header;
+            /// <value>
+            /// header.stamp specifies the ROS time for this measurement (the
+            ///        corresponding satellite time may be reported using the
+            ///        sensor_msgs/TimeReference message).
+            /// </value>
+            std_msgs.HeaderMsg _header;
 
+            /// <summary>
+            /// Satellite fix status information:
+            /// Whether to output an augmented fix is determined by both the fix type and the last time differential corrections were received.
+            /// A fix is valid when status >= STATUS_FIX.
+            /// </summary>
+            /// <see cref="http://docs.ros.org/melodic/api/sensor_msgs/html/msg/NavSatStatus.html"/>
             public enum NavSatStatus
             {
                 NO_FIX = -1,        // unable to fix position
@@ -17,6 +34,11 @@ namespace ROSBridgeLib
             }
             NavSatStatus _status;
 
+            /// <summary>
+            /// Satellite fix status information:
+            /// Defines which Global Navigation Satellite System signals were used by the receiver.
+            /// </summary>
+            /// <see cref="http://docs.ros.org/melodic/api/sensor_msgs/html/msg/NavSatStatus.html"/>
             public enum NavSatService
             {
                 GPS = 1,
@@ -26,11 +48,28 @@ namespace ROSBridgeLib
             }
             NavSatService _service;
 
+            /// <value> Latitude [degrees]. Positive is north of equator; negative is south.</value>
             double _latitude;
+            /// <value> Longitude [degrees]. Positive is east of prime meridian; negative is west.</value>
             double _longitude;
+            /// <value> Altitude [m]. Positive is above the WGS 84 ellipsoid</value>
+            /// <remarks> (quiet NaN if no altitude is available).</remarks>
             double _altitude;
+
+            /// <value>
+            /// Position covariance [m^2] defined relative to a tangential plane
+            /// through the reported position. The components are East, North, and
+            /// Up (ENU), in row-major order.
+            /// </value>
+            /// <remarks> Beware: this coordinate system exhibits singularities at the poles.</remarks>
             double[] _position_covariance;
 
+            /// <summary>
+            /// If the covariance of the fix is known, fill it in completely. If the
+            /// GPS receiver provides the variance of each measurement, put them
+            /// along the diagonal. If only Dilution of Precision is available,
+            /// estimate an approximate covariance from that.
+            /// </summary>
             public enum PositionCovarianceType
             {
                 UNKNOWN = 0,

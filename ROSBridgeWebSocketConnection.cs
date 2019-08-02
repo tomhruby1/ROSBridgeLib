@@ -1,10 +1,11 @@
-using System.Collections.Generic;
-using System.Threading;
-using System.Reflection;
 using System;
+using System.Reflection;
+using System.Collections.Generic;
+
+using UnityEngine;
+
 using WebSocketSharp;
 using SimpleJSON;
-using UnityEngine;
 
 /**
  * This class handles the connection with the external ROS world, deserializing
@@ -28,22 +29,97 @@ using UnityEngine;
 
  namespace ROSBridgeLib {
 
+    /// <summary>
+    /// The interface for classes to subscribe to a topic.
+    /// </summary>
     public interface ROSTopicSubscriber
     {
+        /// <summary>
+        /// The method called when a new message is received on any topic the instance is subscribed to.
+        /// </summary>
+        /// <param name="topic">The name of the topic the message is from.</param>
+        /// <param name="raw_msg">The raw contents of the message as a JSONNode object.</param>
+        /// <param name="parsed">A parsed version of the message as a subclass of ROSBridgeMsg. This may be null if this is the first callback for this message.</param>
+        /// <returns>A parsed version of the message as a subclass of ROSBridgeMsg. This helps reduce redundant parsing.</returns>
         ROSBridgeMsg OnReceiveMessage(string topic, JSONNode raw_msg, ROSBridgeMsg parsed = null);
+        /// <summary>
+        /// A method for determining the type of each topic that class wishes to subscribe to.
+        /// </summary>
+        /// <param name="topic">The topic whose type is requested.</param>
+        /// <returns>The string representing the message type of the topic.</returns>
         string GetMessageType(string topic);
     }
 
+    /// <summary>
+    /// Manages all communications with a single ROSBridge server.
+    /// </summary>
+    /// <remarks>
+    /// Currently, the class is in an awkward, but fully functional state.
+    /// It keeps support for the old system paradigm of using static methods and static variables for everything.
+    /// It is not recommended to use the old paradigm, which will be referred to as the legacy system.
+    /// It worked like this:
+    /// <list type="bullet">
+    /// <item>Publishers, subscribers, and service callers have static methods, parameter-less methods for obtaining its topic/service name and message type.</item>
+    /// <item>Receivers had static methods for parsing a received message and another static method for handling it. This was likely to reduce redudant parsing on the assumption that all subscribers parsed the message the same way.</item>
+    /// <item>Service responses are not parsed, but handed to the callback as is.</item>
+    /// <item>When a message arrived, the list of subscribers was traversed, and a callback was made to every subscriber whose topic name matched the message's topic name.</item>
+    /// <item>Similarily, when a message arrived, the list of subscribers was traversed, and a callback is made to the object whose service name matched the reponse's service name.</item>
+    /// </list>
+    /// The legacy system had several issues/drawbacks that inspired the new system:
+    /// <list type="bullet">
+    /// <item>It assumes that a subscriber class should only need to subscribe to one topic. This creates the need to write a new class for each topic.</item>
+    /// <item>
+    /// There cannot be multiple ROSBridgeWebSocketConnection instances with the same subscriber class as a registered subscriber.
+    /// This is because the callback methods are static, so whatever is being done in the callback method will be done exactly the same
+    /// for calls from both instances of ROSBridgeWebSocketConnection. For instance, if the callback method updates a specific texture instance, 
+    /// callbacks for that topic from both ROSBridgeWebSocketConnection instances (which are connected to different ROSBridge servers) will end up updating
+    /// the SAME texture object. This is not good if, for example, the two ROSBridgeWebSocketConnection instances are communicating with two
+    /// different machines/robots. The callbacks will get muddled.
+    /// </item>
+    /// <item>
+    /// There can only be one service call in-flight/pending at a time.
+    /// This is due to the fact that there was no mechanism to keep track of what service calls were pending.
+    /// Furthermore, the "id" field of the json service call was unused, so the ROSBridge will not attach the id to the response; therefore,
+    /// there was no way to distinguish which responses belonged to which caller other than to only have one service call pending at a time.
+    /// </item>
+    /// </list>
+    /// Meanwhile an improved, non-static method for managing messages/subscribers/service-calls has been impelemented.
+    /// <list type="bullet">
+    /// <item>To publish, simply call AddPublisher with the topic name and string representing the message type. This is only needed to advertise to the ROSBridge server. No reference to publisher is kept.</item>
+    /// <item>For a class to receive messages from any number of topics, it only needs to implement the ROSTopicSubscriber interface and make a call to AddSubscriber for each topic it subscribes to.</item>
+    /// <item>
+    /// To make a service call, pass a JSONServiceResponseHandler callback method, service name, an id string to identify this call, and the argument string for the call.
+    /// The id is included in the final service call and is used to identify the correct callback method to invoke upon receiving the response, which also includes the id.
+    /// The raw service response (id included) is passed to the callback method.
+    /// </item>
+    /// </list>
+    /// </remarks>
  	public class ROSBridgeWebSocketConnection {
+
         // <Changed>
+        /// <summary>
+        /// The signature for callback methods for a service request.
+        /// </summary>
+        /// <param name="node">The raw response as a JSON object.</param>
         public delegate void JSONServiceResponseHandler(JSONNode node);
         // </Changed>
+
         // <Changed>
+        /// <summary>
+        /// A data class for a message queue item.
+        /// </summary>
         private class RenderTask {
-            //private Type _subscriber;
+            //private Type _subscriber
+            /// <value> The name of the topic this message is from. </value>
  			public string topic;
+            /// <value> The contents of the message as a JSON object. </value>
  			public JSONNode msg;
 
+            /// <summary>
+            /// Constructor for a RenderTask object.
+            /// </summary>
+            /// <param name="topic">The name of the topic this message is from.</param>
+            /// <param name="msg">The contents of the message as a JSON object.</param>
  			public RenderTask(string topic, JSONNode msg) {
  				this.topic = topic;
  				this.msg = msg;
@@ -51,100 +127,56 @@ using UnityEngine;
  		};
         // </Changed>
 
+        /// <value> The address of the host running the ROSBridge server.</value>
  		private string _host;
+        /// <value> The port on which the ROSBridge server communicates.</value>
  		private int _port;
+        /// <value> The Websocket object responseible for managing the socket and sending/receiving the raw data over the network.</value>
  		private WebSocket _ws;
+
+
         private bool _connected = false;
  		private System.Threading.Thread _myThread;
 
         // <Changed>
-        //private List<Type> _subscribers; // our subscribers
-        //private List<Type> _publishers; //our publishers
+        /// <value> A mapping from topic name to a list of legacy subscribers to that topic.</value>
         private Dictionary<string, List<Type>> static_subscribers;
+        /// <value> A mapping from topic name to a list of legacy publishers to that topic.</value>
         private Dictionary<string, List<Type>> static_publishers;
+        /// <value> A mapping from topic name to a list of subscribers to that topic.</value>
         private Dictionary<string, List<ROSTopicSubscriber>> subscribers;
+        /// <value> A mapping from topic name to topic type for topics that to be published to.</value>
         private Dictionary<string, string> publishTopic_to_messageType;
         //private Dictionary<string, List<Type>> publishers;
         // </Changed>
 
+        // Legacy service response fields.
         private Type _serviceResponse; // to deal with service responses
 		private string _serviceName = null;
         private JSONNode _rawServiceValues = null;
 		private string _serviceValues = null;
+        // <Changed>
+        // Giving legacy system support for multiple service calls (as long as they are different types).
+        private List<Type> _jsonResponseListeners;
+        // </Changed>
+
+        /// <value> The waiting queue for received messages from topics. They are received but have not been broadcasted to subscribers yet.</value>
 		private Queue<RenderTask> _taskQ = new Queue<RenderTask>();
-		// <Changed>
-		private List<Type> _jsonResponseListeners;
+
+        // <Changed>
+        /// <value> A mapping from id's of pending service calls to the JSONServiceResponseHandler callback to invoke upon its resonse.</value>
         private Dictionary<string, JSONServiceResponseHandler> _pendingServiceResponses;
+        /// <value> A waiting queue for received service responses that haven't been passed to their respective callback methods yet.</value>
         private Queue<JSONNode> _responsesQ;
         // </Changed>
 
         private object _queueLock = new object ();
 
-		private static string GetMessageType(Type t) {
-			return (string) t.GetMethod ("GetMessageType", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, null);
-		}
-
-		private static string GetMessageTopic(Type t) {
-			return (string) t.GetMethod ("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, null);
-		}
-
-		private static ROSBridgeMsg ParseMessage(Type t, JSONNode node) {
-			return (ROSBridgeMsg) t.GetMethod ("ParseMessage", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, new object[] {node});
-		}
-
-		private static void Update(Type t, ROSBridgeMsg msg) {
-			t.GetMethod ("CallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, new object[] {msg});
-		}
-
-		private static void ServiceResponse(Type t, string service, string yaml) {
-			t.GetMethod ("ServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, new object[] {service, yaml});
-		}
-
-		private static void IsValidServiceResponse(Type t) {
-			if (t.GetMethod ("ServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-			throw new Exception ("invalid service response handler");
-		}
-
-		// <Changed>
-		private static string GetJSONServiceName(Type t) {
-			return (string) t.GetMethod ("GetServiceName", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, null);
-		}
-
-		private static void JSONServiceResponse(Type t, JSONNode node) {
-			t.GetMethod ("JSONServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke (null, new object[] {node});
-		}
-
-		private static void IsValidJSONServiceResponse(Type t) {
-			if (t.GetMethod ("JSONServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-			throw new Exception ("invalid JSON service response handler");
-			if (t.GetMethod ("GetServiceName", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-			throw new Exception ("missing GetServiceName method");
-		}
-		// </Changed>
-
-		private static void IsValidStaticSubscriber(Type t) {
-			if(t.GetMethod ("CallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-                throw new Exception ("missing Callback method");
-			if (t.GetMethod ("GetMessageType", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-                throw new Exception ("missing GetMessageType method");
-			if(t.GetMethod ("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-                throw new Exception ("missing GetMessageTopic method");
-			if(t.GetMethod ("ParseMessage", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-                throw new Exception ("missing ParseMessage method");
-		}
-
-		private static void IsValidStaticPublisher(Type t) {
-			if (t.GetMethod ("GetMessageType", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-                throw new Exception ("missing GetMessageType method");
-			if(t.GetMethod ("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
-                throw new Exception ("missing GetMessageTopic method");
-		}
-
 		/**
 		 * Make a connection to a host/port. 
 		 * This does not actually start the connection, use Connect to do that.
 		 */
-		 public ROSBridgeWebSocketConnection(string host, int port) {
+        public ROSBridgeWebSocketConnection(string host, int port) {
 		 	_host = host;
 		 	_port = port;
 		 	_myThread = null;
@@ -166,49 +198,13 @@ using UnityEngine;
             // </Changed>
         }
 
-		/**
-		 * Add a service response callback to this connection.
-		 */
-		 public void AddServiceResponse(Type serviceResponse) {
-		 	IsValidServiceResponse (serviceResponse);
-		 	_serviceResponse = serviceResponse;
-		 }
-
-		 // <Changed>
-		 public void AddJSONServiceResponse(Type jsonServiceResponse) {
-		 	IsValidJSONServiceResponse (jsonServiceResponse);
-		 	_jsonResponseListeners.Add (jsonServiceResponse);
-		 }
-        // </Changed>
-
+        
         // <Changed>
-        /**
-		 * Add a subscriber callback to this connection. There can be many subscribers.
-		 */
-        public void AddSubscriber(Type subscriber) {
-		 	IsValidStaticSubscriber(subscriber);
-            string topicName = (string) subscriber.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { });
-            List<Type> topic_subs;
-            if (static_subscribers.TryGetValue(topicName, out topic_subs))
-            {
-                if (!topic_subs.Contains(subscriber))
-                {
-                    topic_subs.Add(subscriber);
-                }
-            }
-            else
-            {
-                topic_subs = new List<Type>(2);
-                topic_subs.Add(subscriber);
-                static_subscribers.Add(topicName, topic_subs);
-            }
-            if (_connected)
-            {
-                _ws.Send(ROSBridgeMsg.Subscribe(topicName, GetMessageType(subscriber)));
-                Debug.Log("Sending " + ROSBridgeMsg.Subscribe(topicName, GetMessageType(subscriber)));
-            }
-        }
-
+        /// <summary>
+        /// Register a ROSTopicSubscriber to receive messages from a topic.
+        /// </summary>
+        /// <param name="topicName">The topic to receive messages from.</param>
+        /// <param name="subscriber">The ROSTopicSubscriber object to receive the messages from that topic.</param>
         public void AddSubscriber(string topicName, ROSTopicSubscriber subscriber)
         {
             List<ROSTopicSubscriber> topic_subs;
@@ -231,34 +227,11 @@ using UnityEngine;
             }
         }
 
-		/**
-		 * Add a publisher to this connection. There can be many publishers.
-		 */
-		 public void AddPublisher(Type publisher) {
-		 	IsValidStaticPublisher(publisher);
-            string topicName = (string)publisher.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { });
-            List<Type> topic_pubs;
-            if (static_publishers.TryGetValue(topicName, out topic_pubs))
-            {
-                if (!topic_pubs.Contains(publisher))
-                {
-                    topic_pubs.Add(publisher);
-                }
-            }
-            else
-            {
-                topic_pubs = new List<Type>(2);
-                topic_pubs.Add(publisher);
-                static_publishers.Add(topicName, topic_pubs);
-            }
-
-            if (_connected)
-            {
-                _ws.Send(ROSBridgeMsg.Advertise(topicName, GetMessageType(publisher)));
-                Debug.Log("Sending " + ROSBridgeMsg.Advertise(topicName, GetMessageType(publisher)));
-            }
-        }
-
+        /// <summary>
+        /// Advertise to the ROSBridge server that a topic will be published to.
+        /// </summary>
+        /// <param name="topicName">The name of the topic to be published to.</param>
+        /// <param name="message_type">The message type of that topic.</param>
         public void AddPublisher(string topicName, string message_type)
         {
             if (publishTopic_to_messageType.ContainsKey(topicName))
@@ -273,20 +246,55 @@ using UnityEngine;
                 Debug.Log("Sending " + ROSBridgeMsg.Advertise(topicName, message_type));
             }
         }
+
+        /// <summary>
+        /// Publish a message to a topic.
+        /// </summary>
+        /// <param name="topic">The name of the topic to publish to.</param>
+        /// <param name="msg">The message to publish to the topic.</param>
+        /// <remarks>AddPublisher() must be called with this topic's name at least once before publishing to it.</remarks>
+        public void Publish(String topic, ROSBridgeMsg msg)
+        {
+            if (_ws != null)
+            {
+                string s = ROSBridgeMsg.Publish(topic, msg.ToYAMLString());
+                //Debug.Log ("Sending " + s);
+                _ws.Send(s);
+            }
+        }
+
+        /// <summary>
+        /// Perform a service call with a callback for the response.
+        /// </summary>
+        /// <param name="handler">The callback function to invoke when the response of the service call arrives.</param>
+        /// <param name="service_name">The name of the service to be called.</param>
+        /// <param name="id">The ID by which this call is distinguished both to the server and by this class.</param>
+        /// <param name="args">The formatted argument string, as specified by the ROSBridge protocol.</param>
+        /// <see cref="https://github.com/RobotWebTools/rosbridge_suite/blob/groovy-devel/ROSBRIDGE_PROTOCOL.md"/>
+        public void CallService(JSONServiceResponseHandler handler, string service_name, string id, string args = "[]")
+        {
+            if (_ws != null)
+            {
+                _pendingServiceResponses[id] = handler;
+                string s = ROSBridgeMsg.CallService(service_name, id, args);
+                Debug.Log("Sending " + s);
+                _ws.Send(s);
+            }
+        }
         // </Changed>
 
-        /**
-		 * Connect to the remote ros environment.
-		 */
+        /// <summary>
+        /// Connect to the remote ros environment.
+        /// </summary>
         public void Connect() {
 		 	_myThread = new System.Threading.Thread (Run);
 		 	_myThread.Start ();
-		 }
+		}
 
-		/**
-		 * Disconnect from the remote ros environment.
-		 */
-		 public void Disconnect() {
+        /// <summary>
+        /// Disconnect from the remote ros environment.
+        /// </summary>
+        public void Disconnect() {
             _connected = false;
 		 	_myThread.Abort ();
 		 	foreach(string topicName in static_subscribers.Keys) {
@@ -309,9 +317,13 @@ using UnityEngine;
             static_subscribers.Clear();
             static_publishers.Clear();
             subscribers.Clear();
-		 }
+		}
 
-		 private void Run() {
+        /// <summary>
+        /// The function run by the _myThread thread. Establishes WebSocket connection with the remote ROSBridge server.
+        /// Performs all the topic subscriptions and advertisements calls made to this class prior to connection establishment.
+        /// </summary>
+		private void Run() {
 		 	_ws = new WebSocket(_host + ":" + _port);
 		 	_ws.OnMessage += (sender, e) => this.OnMessage(e.Data);
 		 	_ws.Connect();
@@ -345,9 +357,13 @@ using UnityEngine;
 		 	//while(true) {
 		 	//	Thread.Sleep (1000);
 		 	//}
-		 }
+		}
 
-		 private void OnMessage(string s) {
+        /// <summary>
+        /// The callback method called when the WebSocket receives new data. Parses it and queuees it on the correct queue (topic message or service response) for processing.
+        /// </summary>
+        /// <param name="s"></param>
+		private void OnMessage(string s) {
 		 	//Debug.Log ("Got a message " + s);
 		 	if((s != null) && !s.Equals ("")) {
 		 		JSONNode node = JSONNode.Parse(s);
@@ -432,6 +448,10 @@ using UnityEngine;
 				Debug.Log ("Got an empty message from the web socket");
 		}
 
+        /// <summary>
+        /// Performs broadcasting of all queued messages to all subscribers to their respective topics. Serves service call reponses to callers/callback methods.
+        /// </summary>
+        /// <remarks>This method needs to be called on the render thread (inside the Update() function) by at least one active script (Monobehavior) in the scene for it to work.</remarks>
 		public void Render() {
 			RenderTask newTask = null;
             lock (_queueLock)
@@ -506,29 +526,163 @@ using UnityEngine;
             }
         }
 
-        public void Publish(String topic, ROSBridgeMsg msg) {
-			if(_ws != null) {
-				string s = ROSBridgeMsg.Publish (topic, msg.ToYAMLString ());
-				//Debug.Log ("Sending " + s);
-				_ws.Send (s);
-			}
-		}
 
-		public void CallService(string service, string args) {
-			if (_ws != null) {
-				string s = ROSBridgeMsg.CallService (service, args);
-				Debug.Log ("Sending " + s);
-				_ws.Send (s);
-			}
-		}
+
+        // Legacy (static) system methods
+
+
+        private static string GetMessageType(Type t)
+        {
+            return (string)t.GetMethod("GetMessageType", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, null);
+        }
+
+        private static string GetMessageTopic(Type t)
+        {
+            return (string)t.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, null);
+        }
+
+        private static ROSBridgeMsg ParseMessage(Type t, JSONNode node)
+        {
+            return (ROSBridgeMsg)t.GetMethod("ParseMessage", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { node });
+        }
+
+        private static void Update(Type t, ROSBridgeMsg msg)
+        {
+            t.GetMethod("CallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { msg });
+        }
+
+        private static void ServiceResponse(Type t, string service, string yaml)
+        {
+            t.GetMethod("ServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { service, yaml });
+        }
+
+        private static void IsValidServiceResponse(Type t)
+        {
+            if (t.GetMethod("ServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("invalid service response handler");
+        }
 
         // <Changed>
-        public void CallService(JSONServiceResponseHandler handler, string service_name, string id, string args = "[]")
+        private static string GetJSONServiceName(Type t)
+        {
+            return (string)t.GetMethod("GetServiceName", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, null);
+        }
+
+        private static void JSONServiceResponse(Type t, JSONNode node)
+        {
+            t.GetMethod("JSONServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { node });
+        }
+
+        private static void IsValidJSONServiceResponse(Type t)
+        {
+            if (t.GetMethod("JSONServiceCallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("invalid JSON service response handler");
+            if (t.GetMethod("GetServiceName", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("missing GetServiceName method");
+        }
+        // </Changed>
+
+        private static void IsValidStaticSubscriber(Type t)
+        {
+            if (t.GetMethod("CallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("missing Callback method");
+            if (t.GetMethod("GetMessageType", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("missing GetMessageType method");
+            if (t.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("missing GetMessageTopic method");
+            if (t.GetMethod("ParseMessage", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("missing ParseMessage method");
+        }
+
+        private static void IsValidStaticPublisher(Type t)
+        {
+            if (t.GetMethod("GetMessageType", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("missing GetMessageType method");
+            if (t.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+                throw new Exception("missing GetMessageTopic method");
+        }
+
+        /**
+		 * Add a service response callback to this connection.
+		 */
+        public void AddServiceResponse(Type serviceResponse)
+        {
+            IsValidServiceResponse(serviceResponse);
+            _serviceResponse = serviceResponse;
+        }
+
+        // <Changed>
+        /**
+		 * Add a subscriber callback to this connection. There can be many subscribers.
+		 */
+        public void AddSubscriber(Type subscriber)
+        {
+            IsValidStaticSubscriber(subscriber);
+            string topicName = (string)subscriber.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { });
+            List<Type> topic_subs;
+            if (static_subscribers.TryGetValue(topicName, out topic_subs))
+            {
+                if (!topic_subs.Contains(subscriber))
+                {
+                    topic_subs.Add(subscriber);
+                }
+            }
+            else
+            {
+                topic_subs = new List<Type>(2);
+                topic_subs.Add(subscriber);
+                static_subscribers.Add(topicName, topic_subs);
+            }
+            if (_connected)
+            {
+                _ws.Send(ROSBridgeMsg.Subscribe(topicName, GetMessageType(subscriber)));
+                Debug.Log("Sending " + ROSBridgeMsg.Subscribe(topicName, GetMessageType(subscriber)));
+            }
+        }
+
+        /**
+		 * Add a publisher to this connection. There can be many publishers.
+		 */
+        public void AddPublisher(Type publisher)
+        {
+            IsValidStaticPublisher(publisher);
+            string topicName = (string)publisher.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { });
+            List<Type> topic_pubs;
+            if (static_publishers.TryGetValue(topicName, out topic_pubs))
+            {
+                if (!topic_pubs.Contains(publisher))
+                {
+                    topic_pubs.Add(publisher);
+                }
+            }
+            else
+            {
+                topic_pubs = new List<Type>(2);
+                topic_pubs.Add(publisher);
+                static_publishers.Add(topicName, topic_pubs);
+            }
+
+            if (_connected)
+            {
+                _ws.Send(ROSBridgeMsg.Advertise(topicName, GetMessageType(publisher)));
+                Debug.Log("Sending " + ROSBridgeMsg.Advertise(topicName, GetMessageType(publisher)));
+            }
+        }
+        // </Changed>
+
+        // <Changed>
+        public void AddJSONServiceResponse(Type jsonServiceResponse)
+        {
+            IsValidJSONServiceResponse(jsonServiceResponse);
+            _jsonResponseListeners.Add(jsonServiceResponse);
+        }
+        // </Changed>
+
+        public void CallService(string service, string args)
         {
             if (_ws != null)
             {
-                _pendingServiceResponses[id] = handler;
-                string s = ROSBridgeMsg.CallService(service_name, id, args);
+                string s = ROSBridgeMsg.CallService(service, args);
                 Debug.Log("Sending " + s);
                 _ws.Send(s);
             }

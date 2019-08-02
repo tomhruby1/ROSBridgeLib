@@ -1,14 +1,23 @@
-﻿using SimpleJSON;
-using System.Text;
+﻿using System.Text;
+
+using SimpleJSON;
 
 namespace ROSBridgeLib
 {
     namespace sensor_msgs
     {
+        /// <summary>
+        /// Reports the state of a joysticks axes and buttons.
+        /// This class matches the definition of the joy.msg message type on ROS.
+        /// <see cref="http://docs.ros.org/api/sensor_msgs/html/msg/Joy.html"/>
+        /// </summary>
         public class JoyMsg : ROSBridgeMsg
         {
+            /// <value> Timestamp in the header is the time the data is received from the joystick.</value>
             std_msgs.HeaderMsg _header;
+            /// <value> The axes measurements from a joystick.</value>
             float[] _axes;
+            /// <value> The buttons measurements from a joystick.</value>
             int[] _buttons;
 
             public JoyMsg(JSONNode msg)
