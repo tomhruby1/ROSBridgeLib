@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using System.Collections.Generic;
 
@@ -224,6 +224,32 @@ using SimpleJSON;
             {
                 _ws.Send(ROSBridgeMsg.Subscribe(topicName, subscriber.GetMessageType(topicName)));
                 Debug.Log("Sending " + ROSBridgeMsg.Subscribe(topicName, subscriber.GetMessageType(topicName)));
+            }
+        }
+
+        /// <summary>
+        /// Unsubscribe from a specific topic
+        /// TODO: Test this function.
+        /// </summary>
+        /// <param name="topicName"></param>
+        public void RemoveSubscriber(string topicName)
+        {
+            if (_connected)
+            {
+                if (subscribers.ContainsKey(topicName))
+                {
+                    _ws.Send(ROSBridgeMsg.UnSubscribe(topicName));
+                    Debug.Log("Sending " + ROSBridgeMsg.UnSubscribe(topicName));
+                    subscribers.Remove(topicName);
+                }
+                else
+                {
+                    Debug.Log("Invalid subscriber topic name key: " + topicName);
+                }
+            }
+            else
+            {
+                Debug.Log("ROS Connection is inactive");
             }
         }
 
