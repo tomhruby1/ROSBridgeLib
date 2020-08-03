@@ -1,4 +1,4 @@
-﻿using SimpleJSON;
+using SimpleJSON;
 
 namespace ROSBridgeLib
 {
@@ -63,10 +63,10 @@ namespace ROSBridgeLib
             public static byte[] ParseJSONRawData(JSONNode node, bool is_bigendian = true)
             {
                 if (node.GetType() == typeof(JSONArray)) {
-                    return JSONArrayToBytes(node.AsArray);
+                    return JSONArrayToBytes(node.AsArray, is_bigendian);
                 } else
                 {
-                    return JSONDataToBytes(node);
+                    return JSONDataToBytes(node, is_bigendian);
                 }
             }
         }
