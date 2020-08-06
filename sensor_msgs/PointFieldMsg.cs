@@ -1,23 +1,9 @@
-﻿using System.Collections;
-using System.Text;
-using SimpleJSON;
-using ROSBridgeLib.std_msgs;
-using UnityEngine;
+﻿using SimpleJSON;
 
 /**
  * Define a PointField message.
  * @author Miquel Massot Campos
  */
-
-// Datatype:
-//uint8 INT8=1
-//uint8 UINT8=2
-//uint8 INT16=3
-//uint8 UINT16=4
-//uint8 INT32=5
-//uint8 UINT32=6
-//uint8 FLOAT32=7
-//uint8 FLOAT64=8
 
 namespace ROSBridgeLib {
 	namespace sensor_msgs {

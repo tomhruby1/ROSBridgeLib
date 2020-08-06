@@ -50,6 +50,11 @@ namespace ROSBridgeLib {
             public uint GetHeight() {
                 return _height;
             }
+
+            public string GetEncoding()
+            {
+                return _encoding;
+            }
                 
             public uint GetRowStep() {
                 return _row_step;

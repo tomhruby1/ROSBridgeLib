@@ -13,7 +13,7 @@ namespace ROSBridgeLib {
 			private byte _data;
 			
 			public UInt8Msg(JSONNode msg) {
-				_data = byte.Parse(msg);
+				_data = byte.Parse(msg["data"].Value);
 			}
 			
 			public UInt8Msg(byte data) {
