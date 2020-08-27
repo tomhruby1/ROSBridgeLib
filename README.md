@@ -1,6 +1,10 @@
 # ROSBridgeLib
 A Unity library for communication with ROS through [RosBridge](http://wiki.ros.org/rosbridge_suite)
-
+```console
+foo@bar:~$ sudo apt-get install ros-<rosdistro>-rosbridge-suite
+foo@bar:~$ source /opt/ros/<rosdistro>/setup.bash
+foo@bar:~$ roslaunch rosbridge_server rosbridge_websocket.launch
+```
 The first version of this I believe origins from [Michael Jenkin](https://github.com/michaeljenkin), in the repo [unityros](https://github.com/michaeljenkin/unityros). He made a sample unity project showing turtlesim, with good instructions on how to use this project. All honor goes to him. I created this project because there was no repository containing the barebone library.
 
 ## Included messages
@@ -9,6 +13,12 @@ This repository does not contain every ROS message. If you need to add one, plea
 ## Documentation
 Documentation is in the code. I added some more in addition to what Michael Jenkin (original
 author) did. The main file is ROSBridgeWebSocketConnection.cs, which sets up everything.
+
+## Installation
+Clone this repository in to the Assets folder of an Unity project:
+```console
+foo@bar:~$  git clone --recurse-submodules https://github.com/MathiasCiarlo/ROSBridgeLib.git
+```
 
 ## Example usage
 This is an example application where a ball is controlled. Basically, there are three important script types to notice. 
@@ -63,7 +73,7 @@ using SimpleJSON;
 using ROSBridgeLib.geometry_msgs;
 
 
-public class BallPoseSubscriber : MonoBehaviour
+public class BallPoseSubscriber : ROSBridgeSubscriber
 {
   static GameObject ball;
   
@@ -112,7 +122,7 @@ using UnityEngine;
 using SimpleJSON;
 using ROSBridgeLib.geometry_msgs;
 
-public class BallTwistPublisher : MonoBehaviour
+public class BallTwistPublisher : ROSBridgePublisher
 {
     // The following three functions are important
   public static string GetMessageTopic() {
