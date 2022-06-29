@@ -574,7 +574,7 @@ using SimpleJSON;
 
         private static void Update(Type t, ROSBridgeMsg msg)
         {
-            t.GetMethod("CallBack", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { msg });
+            t.GetMethod("CallBack").Invoke(null, new object[] { msg }); //works without binding flags???!
         }
 
         private static void ServiceResponse(Type t, string service, string yaml)
@@ -616,7 +616,8 @@ using SimpleJSON;
                 throw new Exception("missing GetMessageType method");
             if (t.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
                 throw new Exception("missing GetMessageTopic method");
-            if (t.GetMethod("ParseMessage", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
+            if (t.GetMethod("ParseMessage",
+                    BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy) == null)
                 throw new Exception("missing ParseMessage method");
         }
 
@@ -641,9 +642,9 @@ using SimpleJSON;
         /**
 		 * Add a subscriber callback to this connection. There can be many subscribers.
 		 */
-        public void AddSubscriber(Type subscriber)
+        public void AddSubscriber(Type subscriber)  //TODO: AmbiguousMatchException when using type!
         {
-            IsValidStaticSubscriber(subscriber);
+            //IsValidStaticSubscriber(subscriber);
             string topicName = (string)subscriber.GetMethod("GetMessageTopic", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).Invoke(null, new object[] { });
             List<Type> topic_subs;
             if (static_subscribers.TryGetValue(topicName, out topic_subs))
